@@ -33,6 +33,10 @@ td.text{padding-left:38px;}
 [contenteditable="true"]:focus{background:#fefcbf!important;box-shadow:inset 0 0 0 2px #d69e2e;}
 .saved-indicator{position:fixed;top:20px;left:20px;background:#38a169;color:white;padding:10px 18px;border-radius:6px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;}
 .saved-indicator.show{opacity:1;}
+.cloud-indicator{position:fixed;top:60px;left:20px;background:#3182ce;color:white;padding:8px 14px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;}
+.cloud-indicator.show{opacity:1;}
+.cloud-error{position:fixed;top:60px;left:20px;background:#e53e3e;color:white;padding:8px 14px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;}
+.cloud-error.show{opacity:1;}
 </style>
 </head>
 <body>
@@ -53,6 +57,8 @@ td.text{padding-left:38px;}
   </div>
 </div>
 <div id="savedIndicator" class="saved-indicator">נשמר ✓</div>
+<div id="cloudIndicator" class="cloud-indicator">☁ סונכרן</div>
+<div id="cloudError" class="cloud-error">⚠ שגיאת סנכרון — בדוק חוקי Firestore</div>
 <table id="tbl">
 <thead>
 <tr>
@@ -159,6 +165,54 @@ td.text{padding-left:38px;}
 </tr>
 </tbody>
 </table>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
+import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAZWc1RBi9VvoSE404-0bGaCoyXI3ucMuc",
+  authDomain: "haravshuki-tsidkathatsadik.firebaseapp.com",
+  projectId: "haravshuki-tsidkathatsadik",
+  storageBucket: "haravshuki-tsidkathatsadik.firebasestorage.app",
+  messagingSenderId: "1094508795670",
+  appId: "1:1094508795670:web:68c2a8f3f2a421b02b6237"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const docRef = doc(db, "torot", "main");
+
+window._fbReady = false;
+window._suppressSave = false;
+window._lastLocalChange = 0;
+
+window.firestoreSave = async function(data){
+  try{
+    await setDoc(docRef, {rows: data, updatedAt: Date.now()});
+    document.getElementById('cloudIndicator').classList.add('show');
+    setTimeout(()=>document.getElementById('cloudIndicator').classList.remove('show'),900);
+  }catch(e){
+    console.error('Firestore save failed:',e);
+    document.getElementById('cloudError').classList.add('show');
+  }
+};
+
+onSnapshot(docRef, (snap)=>{
+  if(!snap.exists()){
+    window._fbReady = true;
+    // first time - save current state from localStorage or defaults
+    if(typeof saveAll==='function')saveAll();
+    return;
+  }
+  const remote = snap.data();
+  // ignore if it's our own recent write
+  if(window._lastLocalChange && Math.abs(Date.now()-window._lastLocalChange)<2000)return;
+  window._suppressSave = true;
+  if(typeof loadFromData==='function')loadFromData(remote.rows||[]);
+  window._suppressSave = false;
+  window._fbReady = true;
+});
+</script>
 <script>
 const STORAGE_KEY='torot_tzidkat_edits';
 
@@ -192,12 +246,50 @@ function getAllData(){
 }
 
 function saveAll(){
-  localStorage.setItem(STORAGE_KEY,JSON.stringify(getAllData()));
+  if(window._suppressSave)return;
+  const data=getAllData();
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(data));
   const ind=document.getElementById('savedIndicator');
   ind.classList.add('show');
   clearTimeout(window._saveTm);
   window._saveTm=setTimeout(()=>ind.classList.remove('show'),900);
+  // debounced firestore save
+  window._lastLocalChange=Date.now();
+  clearTimeout(window._fbTm);
+  window._fbTm=setTimeout(()=>{
+    if(window.firestoreSave)window.firestoreSave(data);
+  },800);
 }
+
+function loadFromData(rows){
+  const tbody=document.querySelector('#tbl tbody');
+  // remove all existing rows
+  tbody.innerHTML='';
+  // add fresh rows from data
+  rows.forEach(obj=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+<td class="c ot" contenteditable="true" data-field="ot"></td>
+<td class="text"><button class="del-btn" onclick="deleteRow(this)" title="הסר שורה">✕</button><button class="copy-btn" onclick="copyText(this)">העתק</button><div class="text-content" contenteditable="true" data-field="text"></div></td>
+<td class="c" data-field="wc">0</td>
+<td class="c" contenteditable="true" data-field="topic"></td>
+<td class="c" contenteditable="true" data-field="edit"></td>
+<td class="c" contenteditable="true" data-field="time"></td>
+<td class="c" contenteditable="true" data-field="fit"></td>
+<td contenteditable="true" data-field="notes"></td>`;
+    tbody.appendChild(tr);
+    tr.querySelectorAll('[data-field]').forEach(td=>{
+      if(obj[td.dataset.field]!==undefined)td.innerText=obj[td.dataset.field];
+    });
+    const fitTd=tr.querySelector('[data-field="fit"]');
+    if(fitTd){
+      const v=fitTd.innerText.trim();
+      fitTd.className='c '+(['2','4','5'].includes(v)?'fit-'+v:'');
+    }
+    wireRow(tr);
+  });
+}
+window.loadFromData=loadFromData;
 
 function loadSaved(){
   const raw=localStorage.getItem(STORAGE_KEY);
